@@ -25,7 +25,7 @@ enum SocketError: ErrorType {
     case RecvFailed(String)
 }
 
-public class Socket : Hashable {
+public class Socket : Hashable, Equatable {
     
     public class func tcpSocketForListen(port: in_port_t = 8080, maxPendingConnection: Int32 = SOMAXCONN) throws -> Socket {
         
@@ -119,7 +119,11 @@ public class Socket : Hashable {
         try data.withUnsafeBufferPointer { pointer in
             var sent = 0
             while sent < data.count {
-                let s = write(self.socketFileDescriptor, pointer.baseAddress + sent, Int(data.count - sent))
+                #if os(Linux)
+                    let s = send(self.socketFileDescriptor, pointer.baseAddress + sent, Int(data.count - sent), Int32(MSG_NOSIGNAL))
+                #else
+                    let s = write(self.socketFileDescriptor, pointer.baseAddress + sent, Int(data.count - sent))
+                #endif
                 if s <= 0 {
                     throw SocketError.WriteFailed(Socket.descriptionOfLastError())
                 }
@@ -209,5 +213,5 @@ public class Socket : Hashable {
 
 
 public func ==(socket1: Socket, socket2: Socket) -> Bool {
-    return socket1.hashValue == socket2.hashValue
+    return socket1.socketFileDescriptor == socket2.socketFileDescriptor
 }
