@@ -21,7 +21,7 @@ public class HttpServer {
     
     public init() { }
     
-	public subscript(async path: String) -> Handler? {
+    public subscript(async path: String) -> Handler? {
         set {
             if let newValue = newValue {
                 router.register(path, handler: newValue)
@@ -37,12 +37,7 @@ public class HttpServer {
 
     public subscript(path: String) -> SyncHandler? {
         set {
-            if let newValue = newValue {
-                router.register(path, handler: HttpHandlers.fromSyncHandler(newValue))
-            }
-            else {
-                router.unregister(path)
-            }
+            self[async: path] = newValue.flatMap(HttpHandlers.fromSyncHandler)
         }
         get {
             return nil
