@@ -102,4 +102,10 @@ public class HttpHandlers {
             return HttpResponse.NotFound
         }
     }
+    
+    public class func fromSyncHandler(handler: HttpRequest -> HttpResponse) -> HttpServer.Handler {
+        return { request, completion in
+            completion(handler(request))
+        }
+    }
 }

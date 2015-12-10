@@ -10,8 +10,9 @@ public class HttpServer
 {
     static let VERSION = "1.0.2";
     
-    public typealias Handler = HttpRequest -> HttpResponse
-    
+    public typealias Handler = (HttpRequest,  HttpResponse -> ()) -> ()
+    public typealias SyncHandler = HttpRequest -> HttpResponse
+
     private var router = HttpRouter()
     
     private var listenSocket: Socket = Socket(socketFileDescriptor: -1)
@@ -20,9 +21,18 @@ public class HttpServer
     
     public init() { }
     
-    public subscript (path: String) -> Handler? {
+    public subscript (async path: String) -> Handler? {
         set {
             router.register(path, handler: newValue!)
+        }
+        get {
+            return nil
+        }
+    }
+    
+    public subscript (path: String) -> SyncHandler? {
+        set {
+            router.register(path, handler: HttpHandlers.fromSyncHandler(newValue!))
         }
         get {
             return nil
@@ -44,30 +54,47 @@ public class HttpServer
                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0)) {
                     let socketAddress = try? socket.peername()
                     let httpParser = HttpParser()
-                    while let request = try? httpParser.readHttpRequest(socket) {
-                        let keepAlive = httpParser.supportsKeepAlive(request.headers)
-                        let response: HttpResponse
-                        if let (params, handler) = self.router.select(request.url) {
-                            let updatedRequest = HttpRequest(url: request.url, urlParams: request.urlParams, method: request.method, headers: request.headers, body: request.body, address: socketAddress, params: params)
-                            response = handler(updatedRequest)
-                        } else {
-                            response = HttpResponse.NotFound
+                    HttpServer.processRequest(self.router, httpParser: httpParser, socket: socket, socketAddress: socketAddress) {
+                        socket.release()
+                        HttpServer.lock(self.clientSocketsLock) {
+                            self.clientSockets.remove(socket)
                         }
-                        do {
-                            try HttpServer.respond(socket, response: response, keepAlive: keepAlive)
-                        } catch {
-                            print("Failed to send response: \(error)")
-                            break
-                        }
-                        if !keepAlive { break }
-                    }
-                    socket.release()
-                    HttpServer.lock(self.clientSocketsLock) {
-                        self.clientSockets.remove(socket)
                     }
                 }
             }
             self.stop()
+        }
+    }
+    
+    private class func processRequest(router: HttpRouter, httpParser: HttpParser, socket: Socket, socketAddress: String?, cleanup: () -> ()) {
+        if let request = try? httpParser.readHttpRequest(socket) {
+            let keepAlive = httpParser.supportsKeepAlive(request.headers)
+            
+            let sendResponse: HttpResponse -> () = { response in
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0)) {
+                    do {
+                        try HttpServer.respond(socket, response: response, keepAlive: keepAlive)
+                    } catch {
+                        print("Failed to send response: \(error)")
+                        cleanup()
+                        return
+                    }
+                    
+                    guard keepAlive else {
+                        cleanup()
+                        return
+                    }
+                    
+                    HttpServer.processRequest(router, httpParser: httpParser, socket: socket, socketAddress: socketAddress, cleanup: cleanup)
+                }
+            }
+            
+            if let (params, handler) = router.select(request.url) {
+                let updatedRequest = HttpRequest(url: request.url, urlParams: request.urlParams, method: request.method, headers: request.headers, body: request.body, address: socketAddress, params: params)
+                handler(updatedRequest, sendResponse)
+            } else {
+                sendResponse(HttpResponse.NotFound)
+            }
         }
     }
 

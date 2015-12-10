@@ -21,6 +21,14 @@ public func demoServer(publicDir: String?) -> HttpServer {
         return .OK(.Html(listPage))
     }
     
+    server[async: "/async"] = { r, c in
+        let seconds = 3
+        let delayTime = dispatch_time(DISPATCH_TIME_NOW, Int64(Double(seconds) * Double(NSEC_PER_SEC)))
+        dispatch_after(delayTime, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0)) {
+            c(.OK(.Html("Answer after \(seconds) seconds.")))
+        }
+    }
+    
     server["/magic"] = { .OK(.Html("You asked for " + $0.url)) }
     
     server["/test/:param1/:param2"] = { r in
